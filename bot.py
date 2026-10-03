@@ -1,12 +1,16 @@
 import asyncio
 from service import *
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-
-from database import init_db,add_search, get_searches
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup
+from database import init_db,add_search, get_searches, db_delete_searches
 
 bot = Bot(API)
 dp = Dispatcher()
@@ -15,12 +19,29 @@ async def main():
     print('Database Successfully Initialized!')
     await dp.start_polling(bot)
 
+
+main_keyboard= ReplyKeyboardMarkup(
+    keyboard=[
+        [#KeyboardButton(text="📍 Добавить адрес"),
+         KeyboardButton(text='🔍 Мои поиски'),
+         KeyboardButton(text="⚙️ Настройки"),
+        ]
+    ],
+    resize_keyboard= True
+)
+
+cancel_keyboard= ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="❌ Отмена")]],
+    resize_keyboard= True,
+)
+
+
+
 @dp.message (CommandStart())
 async def cmd_start (message: Message):
-    await message.answer("Привет! \nЯ твой бот для поиска новинок в Avito \n"
-                         "/help - для помощи")
+    await message.answer("Привет! \nЯ твой бот для поиска новинок в Avito \n", reply_markup=main_keyboard)
 
-@dp.message (Command('help'))
+@dp.message (F.text == '🛟 Помощь')
 async def cmd_help(message: Message):
     await message.answer("Возможные команды:\n"
                          "/add - добавить новый поиск\n"
@@ -34,10 +55,16 @@ class AddSearchGroup(StatesGroup):
     waiting_for_max_price = State()
 
 
-@dp.message (Command('add'))
-async def cmd_add(message: Message, state: FSMContext):
+
+@dp.message(F.text=="❌ Отмена" )
+async def cancel(message: Message, state:FSMContext):
+    await state.clear()
+    await message.answer("Действие отменено успешно!", reply_markup=main_keyboard)
+
+@dp.callback_query (F.data == 'add')
+async def cmd_add(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddSearchGroup.waiting_for_query)
-    await message.answer("Введите название товара")
+    await callback.message.answer("Введите название товара",reply_markup=cancel_keyboard)
 
 @dp.message (AddSearchGroup.waiting_for_query)
 async def process_query(message: Message, state: FSMContext):
@@ -82,23 +109,75 @@ async def max_price(message: Message, state: FSMContext):
 
     await message.answer(
         f" Поиск успешно сохранен!\n\n"
-        f"{query} ({min_price} - {max_price} руб.)" )
+        f"{query} ({min_price} - {max_price} руб.)\n"
+         ,reply_markup=main_keyboard)
     await state.clear()
 
-@dp.message (Command('show_my_searches'))
+
+editing_keyboard= InlineKeyboardMarkup(
+    inline_keyboard=[[InlineKeyboardButton(text='➕ Добавить поиск', callback_data='add')],
+                        [InlineKeyboardButton(text='➖ Удалить', callback_data='edit')]
+                     ]
+)
+
+class EditSearchGroup(StatesGroup):
+    editing = State()
+
+@dp.message (F.text == '🔍 Мои поиски')
 async def cmd_show_my_searches(message: Message):
-    searches = await get_searches(message.from_user.id)
+    searches = await get_searches(message.chat.id)
 
     if not searches:
-        await message.answer('У тебя пока нет поисков')
-        return
+        text = 'У тебя пока нет поисков\n'
+    else:
+        text = 'Твои поиски:\n\n'
 
-    text = 'Твои поиски:\n\n'
     for s in searches:
         searche_id, query, min_price, max_price = s
-        text+= f"*{searche_id}* {query}  ({min_price}-{max_price})\n"
-    await message.answer(text, pase_mode="Markdown")
+        text+= f"**{searche_id}**.  {query} ({min_price}-{max_price}) \n"
+    await message.answer(text,reply_markup=editing_keyboard, parse_mode="Markdown")
 
+def get_searches_keyboard(searches)-> InlineKeyboardMarkup:
+    builder=InlineKeyboardBuilder()
+    for s in searches:
+        searche_id, query, min_price, max_price = s
+        builder.button(text=f'{searche_id}. {query}  ({min_price}-{max_price})', callback_data=f'del:{searche_id}')
+        builder.adjust(1)
+    builder.button(text="❌ Отмена", callback_data="cancel_edit")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+
+@dp.callback_query (F.data == "edit")
+async def callback_query(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditSearchGroup.editing)
+    searches = await get_searches(callback.from_user.id)
+    if len(searches) <1:
+        await state.clear()
+        await cmd_show_my_searches(callback.message)
+        return
+    editkb=get_searches_keyboard(searches)
+
+    await callback.message.edit_text(
+        text="Нажмите для удаления",
+        reply_markup=editkb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query (F.data.startswith('del:'))
+async def delete_searches(callback: CallbackQuery, state: FSMContext):
+    search_id=int(callback.data.split(':')[1])
+    await db_delete_searches(search_id,callback.message.chat.id)
+    await callback_query(callback, state)
+
+
+@dp.callback_query(F.data=="cancel_edit" )# ❌
+async def cancel(callback: CallbackQuery, state:FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await cmd_show_my_searches(callback.message)
 
 
 if __name__ == '__main__':

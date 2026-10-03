@@ -17,7 +17,7 @@ async def init_db():
         await db.execute('''CREATE TABLE IF NOT EXISTS seenitems (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         item_id INTEGER NOT NULL,
-        created_at TIMESTAMP NOT NULL)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
         ''')
         await db.commit()
 async def add_search(user_id: int, query: str, min_price: int = 0, max_price: int = 0):
@@ -25,8 +25,15 @@ async def add_search(user_id: int, query: str, min_price: int = 0, max_price: in
         await db.execute('''INSERT INTO search (user_id, query, min_price, max_price) VALUES (?, ?, ?, ?)''',
             (user_id, query, min_price, max_price)
         )
+        await db.commit()
 
 async def get_searches(user_id: int):
     async with aiosqlite.connect(db_name) as db:
-        async with db.execute('''SELECT * FROM search WHERE user_id = ?''', (user_id,)
-        ) as cursor: return await cursor.fetchall()
+        #print("Connected with db")
+        async with db.execute('''SELECT id, query, min_price, max_price FROM search WHERE user_id = ?''', (user_id,)) as cursor:
+            return await cursor.fetchall()
+
+async def db_delete_searches(search_id: int, user_id: int):
+    async with aiosqlite.connect(db_name) as db:
+        async with db.execute('''DELETE FROM search WHERE id = ? and user_id = ?''', (search_id, user_id)) as cursor:
+            await db.commit()
