@@ -131,23 +131,24 @@ async def cmd_show_my_searches(message: Message):
         text = 'У тебя пока нет поисков\n'
     else:
         text = 'Твои поиски:\n\n'
-
+    i = 1
     for s in searches:
         searche_id, query, min_price, max_price = s
-        text+= f"**{searche_id}**.  {query} ({min_price}-{max_price}) \n"
+        text+= f"**{i}**.  {query} ({min_price} - {max_price}) \n"
+        i+=1
     await message.answer(text,reply_markup=editing_keyboard, parse_mode="Markdown")
 
 def get_searches_keyboard(searches)-> InlineKeyboardMarkup:
     builder=InlineKeyboardBuilder()
+    i=1
     for s in searches:
         searche_id, query, min_price, max_price = s
-        builder.button(text=f'{searche_id}. {query}  ({min_price}-{max_price})', callback_data=f'del:{searche_id}')
+        builder.button(text=f'{i}. {query}  ({min_price}-{max_price})', callback_data=f'del:{searche_id}')
+        i+=1
         builder.adjust(1)
     builder.button(text="❌ Отмена", callback_data="cancel_edit")
     builder.adjust(1)
     return builder.as_markup()
-
-
 
 @dp.callback_query (F.data == "edit")
 async def callback_query(callback: CallbackQuery, state: FSMContext):
@@ -171,7 +172,6 @@ async def delete_searches(callback: CallbackQuery, state: FSMContext):
     search_id=int(callback.data.split(':')[1])
     await db_delete_searches(search_id,callback.message.chat.id)
     await callback_query(callback, state)
-
 
 @dp.callback_query(F.data=="cancel_edit" )# ❌
 async def cancel(callback: CallbackQuery, state:FSMContext):
